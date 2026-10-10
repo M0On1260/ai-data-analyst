@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import time
 
 import pandas as pd
 
@@ -90,16 +91,21 @@ def analyze(
     rich_schema: bool = True,
     explain_result: bool = True,
     timeout: int = 20,
+    on_step=None,
 ) -> dict:
     """Answer one question. Retries with the error message if the code fails."""
     prompt = f"{build_schema(df, rich_schema)}\n\n{_history_block(history)}Question: {question}"
     messages = [{"role": "user", "content": prompt}]
+    step = on_step or (lambda text: None)
+    started = time.time()
 
     code, run, attempts = "", {"ok": False, "error": "not run"}, 0
     for _ in range(max_retries + 1):
         attempts += 1
+        step("Writing analysis code..." if attempts == 1 else f"Fixing the code (attempt {attempts})...")
         raw = client.chat(SYSTEM_PROMPT, messages, max_tokens=1500)
         code = extract_code(raw)
+        step("Running the code on your data...")
         run = run_code(code, df, timeout=timeout)
         if run["ok"]:
             break
@@ -113,5 +119,7 @@ def analyze(
 
     out = {"question": question, "code": code, "attempts": attempts, **run}
     if run["ok"] and explain_result:
+        step("Writing the explanation...")
         out["explanation"] = explain(client, question, code, run)
+    out["seconds"] = round(time.time() - started, 1)
     return out

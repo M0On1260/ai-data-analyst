@@ -88,6 +88,11 @@ with st.sidebar:
             key=f"model_{provider}",
         )
 
+    explain_on = st.checkbox(
+        "Write a plain-English explanation", value=True,
+        help="Adds a second AI call. Turn it off for faster answers.",
+    )
+
     st.header("Data")
     uploaded = st.file_uploader("Upload a CSV or Excel file", type=["csv", "xlsx", "xls"])
     use_sample = st.button("Use sample sales data")
@@ -143,7 +148,7 @@ def render(result: dict, key: str):
             st.caption(f"Raw result: {result['text']}")
     with st.expander("Show generated code"):
         st.code(result["code"], language="python")
-        st.caption(f"Attempts: {result['attempts']}")
+        st.caption(f"Attempts: {result['attempts']} | Time: {result.get('seconds', '?')}s")
 
 
 for i, m in enumerate(st.session_state["messages"]):
@@ -167,8 +172,14 @@ if question := st.chat_input("Ask a question about your data"):
 
     with st.chat_message("assistant"):
         try:
-            with st.spinner("Analyzing..."):
-                result = analyze(df, question, get_client(provider, api_key, model), history=st.session_state["history"])
+            with st.status("Analyzing...", expanded=True) as status:
+                result = analyze(
+                    df, question, get_client(provider, api_key, model),
+                    history=st.session_state["history"],
+                    explain_result=explain_on,
+                    on_step=lambda text: (st.write(text), status.update(label=text)),
+                )
+                status.update(label=f"Done in {result['seconds']}s", state="complete", expanded=False)
         except Exception as e:  # API/auth/network errors
             st.error(f"API error: {e}")
             st.stop()

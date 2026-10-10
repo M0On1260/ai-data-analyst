@@ -36,22 +36,36 @@ class GeminiLLM:
             for m in messages
         ]
         # Gemini thinking models spend part of the output budget on internal "thinking",
-        # so give them more room than the visible answer needs.
-        config = types.GenerateContentConfig(
-            system_instruction=system,
-            max_output_tokens=max(max_tokens, 4096),
-            temperature=0,
-        )
+        # so give them more room than the visible answer needs. Low thinking is plenty
+        # for writing pandas code and is much faster than the default.
+        def make_config(low_thinking: bool):
+            kwargs = dict(
+                system_instruction=system,
+                max_output_tokens=max(max_tokens, 4096),
+                temperature=0,
+            )
+            if low_thinking:
+                try:
+                    kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="low")
+                except Exception:  # older SDK without thinking_level
+                    pass
+            return types.GenerateContentConfig(**kwargs)
+
+        low_thinking = True
         for attempt in range(5):
             try:
                 resp = self.client.models.generate_content(
-                    model=self.model, contents=contents, config=config
+                    model=self.model, contents=contents, config=make_config(low_thinking)
                 )
                 return resp.text or ""
-            except Exception as e:  # free tier is rate limited: back off and retry
+            except Exception as e:
                 msg = str(e)
+                if low_thinking and "thinking" in msg.lower():
+                    low_thinking = False  # this model rejects the setting: retry without it
+                    continue
+                # free tier is rate limited: back off and retry
                 if ("429" in msg or "RESOURCE_EXHAUSTED" in msg or "503" in msg) and attempt < 4:
-                    time.sleep(10 * (attempt + 1))
+                    time.sleep(5 * (attempt + 1))
                     continue
                 raise
         return ""
