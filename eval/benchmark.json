@@ -1,0 +1,129 @@
+[
+  {
+    "question": "How many orders are in the dataset?",
+    "type": "number",
+    "expected": 2000.0,
+    "tolerance": 0
+  },
+  {
+    "question": "What is the total revenue?",
+    "type": "number",
+    "expected": 60096158.18000001,
+    "tolerance": 0.01
+  },
+  {
+    "question": "Which region has the highest total revenue?",
+    "type": "string",
+    "expected": [
+      "South"
+    ]
+  },
+  {
+    "question": "Which category has the lowest total revenue?",
+    "type": "string",
+    "expected": [
+      "Groceries"
+    ]
+  },
+  {
+    "question": "What is the average revenue per order?",
+    "type": "number",
+    "expected": 30048.079090000003,
+    "tolerance": 0.01
+  },
+  {
+    "question": "How many unique products are sold?",
+    "type": "number",
+    "expected": 20.0,
+    "tolerance": 0
+  },
+  {
+    "question": "What is the total revenue from the Electronics category?",
+    "type": "number",
+    "expected": 39579181.34,
+    "tolerance": 0.01
+  },
+  {
+    "question": "Which product sold the most units in total?",
+    "type": "string",
+    "expected": [
+      "Comic"
+    ]
+  },
+  {
+    "question": "In which month of 2025 was total revenue the highest? Answer with the month name.",
+    "type": "string",
+    "expected": [
+      "December",
+      "2025-12"
+    ]
+  },
+  {
+    "question": "What percentage of orders are from the Corporate segment?",
+    "type": "number",
+    "expected": 20.95,
+    "tolerance": 0.01
+  },
+  {
+    "question": "What is the average discount_pct, ignoring missing values?",
+    "type": "number",
+    "expected": 6.26530612244898,
+    "tolerance": 0.01
+  },
+  {
+    "question": "How many orders have a missing discount_pct?",
+    "type": "number",
+    "expected": 40.0,
+    "tolerance": 0
+  },
+  {
+    "question": "What is the total revenue in 2024?",
+    "type": "number",
+    "expected": 28232968.35,
+    "tolerance": 0.01
+  },
+  {
+    "question": "Which region has the highest average revenue per order?",
+    "type": "string",
+    "expected": [
+      "East"
+    ]
+  },
+  {
+    "question": "What is the median unit_price in the Furniture category?",
+    "type": "number",
+    "expected": 13636.785,
+    "tolerance": 0.01
+  },
+  {
+    "question": "How many orders had more than 5 units?",
+    "type": "number",
+    "expected": 497.0,
+    "tolerance": 0
+  },
+  {
+    "question": "By what percentage did total revenue grow from 2024 to 2025?",
+    "type": "number",
+    "expected": 12.858093541552806,
+    "tolerance": 0.01
+  },
+  {
+    "question": "Which customer_segment has the highest average units per order?",
+    "type": "string",
+    "expected": [
+      "Corporate"
+    ]
+  },
+  {
+    "question": "What is the highest single-order revenue?",
+    "type": "number",
+    "expected": 654991.92,
+    "tolerance": 0.01
+  },
+  {
+    "question": "How many orders were placed in the South region in the fourth quarter of 2025?",
+    "type": "number",
+    "expected": 89.0,
+    "tolerance": 0
+  }
+]
