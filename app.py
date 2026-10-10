@@ -8,7 +8,9 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from analyst import analyze, build_schema
+import time
+
+from analyst import analyze, build_schema, explain
 from llm import DEFAULT_CLAUDE_MODEL, DEFAULT_GEMINI_MODEL, detect_provider, env_key, get_client
 
 st.set_page_config(page_title="AI Data Analyst", page_icon="📊", layout="wide")
@@ -130,25 +132,31 @@ with st.expander(f"Data preview: {dataset_name} ({len(df):,} rows, {len(df.colum
 
 
 def render(result: dict, key: str):
+    """Draw one answer. Returns a placeholder where the explanation can appear later."""
+    slot = st.empty()
+    if result.get("explanation"):
+        slot.markdown(result["explanation"])
     if not result.get("ok"):
         st.error(f"Couldn't produce a working answer after {result['attempts']} attempt(s).")
         st.code(result.get("error", ""), language="text")
     else:
-        if result.get("explanation"):
-            st.markdown(result["explanation"])
         if result.get("figure") is not None:
             st.plotly_chart(result["figure"], key=f"fig_{key}")
         if result["kind"] == "table":
             st.dataframe(result["table"])
             if result["total_rows"] > len(result["table"]):
                 st.caption(f"Showing first {len(result['table'])} of {result['total_rows']:,} rows.")
-        elif not result.get("explanation"):
-            st.write(result["text"])
         else:
-            st.caption(f"Raw result: {result['text']}")
+            st.markdown(f"**Result:** {result['text']}")
     with st.expander("Show generated code"):
         st.code(result["code"], language="python")
-        st.caption(f"Attempts: {result['attempts']} | Time: {result.get('seconds', '?')}s")
+        t = result.get("timings", {})
+        line = (f"Model: {result.get('model', '?')} | Attempts: {result['attempts']} | "
+                f"AI: {t.get('ai_seconds', '?')}s | Code: {t.get('run_seconds', '?')}s")
+        if "explain_seconds" in t:
+            line += f" | Explanation: {t['explain_seconds']}s"
+        st.caption(line)
+    return slot
 
 
 for i, m in enumerate(st.session_state["messages"]):
@@ -173,10 +181,11 @@ if question := st.chat_input("Ask a question about your data"):
     with st.chat_message("assistant"):
         try:
             with st.status("Analyzing...", expanded=True) as status:
+                client = get_client(provider, api_key, model)
                 result = analyze(
-                    df, question, get_client(provider, api_key, model),
+                    df, question, client,
                     history=st.session_state["history"],
-                    explain_result=explain_on,
+                    explain_result=False,  # explanation is added after the answer is shown
                     on_step=lambda text: (st.write(text), status.update(label=text)),
                 )
                 status.update(label=f"Done in {result['seconds']}s", state="complete", expanded=False)
@@ -184,7 +193,18 @@ if question := st.chat_input("Ask a question about your data"):
             st.error(f"API error: {e}")
             st.stop()
         idx = len(st.session_state["messages"])
-        render(result, key=str(idx))
+        slot = render(result, key=str(idx))
+
+        if explain_on and result.get("ok"):
+            t0 = time.time()
+            try:
+                with slot, st.spinner("Writing the explanation..."):
+                    text = explain(client, question, result["code"], result)
+                slot.markdown(text)
+                result["explanation"] = text
+            except Exception:
+                slot.empty()  # the answer is already on screen; the explanation is optional
+            result.setdefault("timings", {})["explain_seconds"] = round(time.time() - t0, 1)
 
     st.session_state["asked"] = st.session_state.get("asked", 0) + 1
     daily_usage()["count"] += 1

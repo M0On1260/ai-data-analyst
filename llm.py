@@ -13,6 +13,7 @@ import os
 import time
 
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"  # Google retires older models; override with GEMINI_MODEL
+DEFAULT_GEMINI_FALLBACKS = "gemini-3.5-flash-lite,gemini-3.1-flash-lite"  # lighter, faster models
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-5-5"
 
 
@@ -21,9 +22,23 @@ class GeminiLLM:
 
     def __init__(self, api_key: str | None = None, model: str | None = None):
         from google import genai  # pip install google-genai
+        from google.genai import types
 
         self.model = model or os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
-        self.client = genai.Client(api_key=api_key) if api_key else genai.Client()
+        fallbacks = os.environ.get("GEMINI_FALLBACK_MODELS", DEFAULT_GEMINI_FALLBACKS)
+        self.fallbacks = [m.strip() for m in fallbacks.split(",") if m.strip() and m.strip() != self.model]
+        self.last_model = self.model  # model that actually answered the last call
+        # Cap each request so a stuck call fails over to a faster model instead of hanging.
+        kwargs = {"http_options": types.HttpOptions(timeout=int(os.environ.get("GEMINI_TIMEOUT_S", "45")) * 1000)}
+        if api_key:
+            kwargs["api_key"] = api_key
+        self.client = genai.Client(**kwargs)
+
+    @staticmethod
+    def _is_slow_or_busy(msg: str) -> bool:
+        m = msg.lower()
+        return any(x in m for x in ("429", "resource_exhausted", "503", "504", "unavailable",
+                                    "timed out", "timeout", "deadline", "404", "not_found"))
 
     def chat(self, system: str, messages: list[dict], max_tokens: int = 1500) -> str:
         from google.genai import types
@@ -35,6 +50,7 @@ class GeminiLLM:
             )
             for m in messages
         ]
+
         # Gemini thinking models spend part of the output budget on internal "thinking",
         # so give them more room than the visible answer needs. Low thinking is plenty
         # for writing pandas code and is much faster than the default.
@@ -51,24 +67,31 @@ class GeminiLLM:
                     pass
             return types.GenerateContentConfig(**kwargs)
 
-        low_thinking = True
-        for attempt in range(5):
-            try:
-                resp = self.client.models.generate_content(
-                    model=self.model, contents=contents, config=make_config(low_thinking)
-                )
-                return resp.text or ""
-            except Exception as e:
-                msg = str(e)
-                if low_thinking and "thinking" in msg.lower():
-                    low_thinking = False  # this model rejects the setting: retry without it
-                    continue
-                # free tier is rate limited: back off and retry
-                if ("429" in msg or "RESOURCE_EXHAUSTED" in msg or "503" in msg) and attempt < 4:
-                    time.sleep(5 * (attempt + 1))
-                    continue
-                raise
-        return ""
+        last_error: Exception | None = None
+        for model in [self.model] + self.fallbacks:
+            low_thinking = True
+            for attempt in range(2):  # at most one quick retry per model
+                try:
+                    resp = self.client.models.generate_content(
+                        model=model, contents=contents, config=make_config(low_thinking)
+                    )
+                    self.last_model = model
+                    return resp.text or ""
+                except Exception as e:
+                    last_error = e
+                    msg = str(e)
+                    if low_thinking and "thinking" in msg.lower():
+                        low_thinking = False  # this model rejects the setting: retry without it
+                        continue
+                    if not self._is_slow_or_busy(msg):
+                        raise  # a real error (bad key, bad request...): don't hide it
+                    print(f"[gemini] {model} failed ({msg[:100]}); "
+                          f"{'retrying' if attempt == 0 and '429' in msg else 'trying next model'}", flush=True)
+                    if attempt == 0 and ("429" in msg or "RESOURCE_EXHAUSTED" in msg):
+                        time.sleep(4)  # brief pause, then one retry on the same model
+                        continue
+                    break  # timeout / overloaded / retired: move to the next model
+        raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
 
 
 class ClaudeLLM:

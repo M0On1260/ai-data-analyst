@@ -98,15 +98,20 @@ def analyze(
     messages = [{"role": "user", "content": prompt}]
     step = on_step or (lambda text: None)
     started = time.time()
+    timings = {"ai_seconds": 0.0, "run_seconds": 0.0}
 
     code, run, attempts = "", {"ok": False, "error": "not run"}, 0
     for _ in range(max_retries + 1):
         attempts += 1
         step("Writing analysis code..." if attempts == 1 else f"Fixing the code (attempt {attempts})...")
+        t0 = time.time()
         raw = client.chat(SYSTEM_PROMPT, messages, max_tokens=1500)
+        timings["ai_seconds"] += time.time() - t0
         code = extract_code(raw)
         step("Running the code on your data...")
+        t0 = time.time()
         run = run_code(code, df, timeout=timeout)
+        timings["run_seconds"] += time.time() - t0
         if run["ok"]:
             break
         messages += [
@@ -121,5 +126,7 @@ def analyze(
     if run["ok"] and explain_result:
         step("Writing the explanation...")
         out["explanation"] = explain(client, question, code, run)
+    out["model"] = getattr(client, "last_model", getattr(client, "model", None))
     out["seconds"] = round(time.time() - started, 1)
+    out["timings"] = {k: round(v, 1) for k, v in timings.items()}
     return out
