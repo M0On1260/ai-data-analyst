@@ -2,6 +2,7 @@
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -17,6 +18,42 @@ st.caption("Ask questions about your data in plain English. The generated code i
 SAMPLE = Path("data/sales.csv")
 
 
+def server_secret(name: str):
+    """Read a setting from env vars or Streamlit secrets (never shown to visitors)."""
+    value = os.environ.get(name)
+    if value:
+        return value
+    try:
+        return st.secrets.get(name)
+    except Exception:
+        return None
+
+
+# Hosted mode: a Gemini key stored server-side. Visitors never see or enter a key,
+# so usage is capped to protect the free quota.
+SERVER_KEY = server_secret("GEMINI_API_KEY") or server_secret("GOOGLE_API_KEY")
+MAX_PER_SESSION = int(server_secret("MAX_QUESTIONS_PER_SESSION") or 15)
+MAX_PER_DAY = int(server_secret("MAX_QUESTIONS_PER_DAY") or 150)
+
+
+@st.cache_resource
+def daily_usage() -> dict:
+    return {"day": None, "count": 0}
+
+
+def quota_message() -> str | None:
+    """Return a message if the question limits are used up, else None."""
+    if st.session_state.get("asked", 0) >= MAX_PER_SESSION:
+        return f"Demo limit reached ({MAX_PER_SESSION} questions per session). Refresh the page to start a new session."
+    usage = daily_usage()
+    today = datetime.now(timezone.utc).date()
+    if usage["day"] != today:
+        usage["day"], usage["count"] = today, 0
+    if usage["count"] >= MAX_PER_DAY:
+        return "The free daily quota for this demo is used up. Please try again tomorrow."
+    return None
+
+
 @st.cache_data(show_spinner=False)
 def load_file(name: str, content: bytes) -> pd.DataFrame:
     import io
@@ -28,24 +65,28 @@ def load_file(name: str, content: bytes) -> pd.DataFrame:
 # ---------- sidebar: key + data ----------
 with st.sidebar:
     st.header("Setup")
-    providers = ["Gemini (free tier)", "Claude"]
-    provider = "gemini" if st.selectbox(
-        "AI provider", providers, index=0 if detect_provider() == "gemini" else 1
-    ) == providers[0] else "claude"
-    key_var = "GEMINI_API_KEY" if provider == "gemini" else "ANTHROPIC_API_KEY"
-    api_key = env_key(provider) or st.text_input(
-        f"{'Gemini' if provider == 'gemini' else 'Anthropic'} API key",
-        type="password",
-        help=f"Or set the {key_var} environment variable. Get a free Gemini key at aistudio.google.com.",
-    )
-
-    model = st.text_input(
-        "Model",
-        value=os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL) if provider == "gemini"
-        else os.environ.get("CLAUDE_MODEL", DEFAULT_CLAUDE_MODEL),
-        help="If you get a 404 'model not found' error, Google/Anthropic retired it: paste the current model name here.",
-        key=f"model_{provider}",
-    )
+    if SERVER_KEY:
+        provider, api_key = "gemini", SERVER_KEY
+        model = server_secret("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        st.caption(f"Powered by Gemini ({model}). Demo limit: {MAX_PER_SESSION} questions per session.")
+    else:
+        providers = ["Gemini (free tier)", "Claude"]
+        provider = "gemini" if st.selectbox(
+            "AI provider", providers, index=0 if detect_provider() == "gemini" else 1
+        ) == providers[0] else "claude"
+        key_var = "GEMINI_API_KEY" if provider == "gemini" else "ANTHROPIC_API_KEY"
+        api_key = env_key(provider) or st.text_input(
+            f"{'Gemini' if provider == 'gemini' else 'Anthropic'} API key",
+            type="password",
+            help=f"Or set the {key_var} environment variable. Get a free Gemini key at aistudio.google.com.",
+        )
+        model = st.text_input(
+            "Model",
+            value=os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL) if provider == "gemini"
+            else os.environ.get("CLAUDE_MODEL", DEFAULT_CLAUDE_MODEL),
+            help="If you get a 404 'model not found' error, the model was retired: paste the current name here.",
+            key=f"model_{provider}",
+        )
 
     st.header("Data")
     uploaded = st.file_uploader("Upload a CSV or Excel file", type=["csv", "xlsx", "xls"])
@@ -116,6 +157,9 @@ if question := st.chat_input("Ask a question about your data"):
     if not api_key:
         st.warning("Add your API key in the sidebar first.")
         st.stop()
+    if SERVER_KEY and (msg := quota_message()):
+        st.warning(msg)
+        st.stop()
 
     st.session_state["messages"].append({"role": "user", "content": question})
     with st.chat_message("user"):
@@ -131,5 +175,7 @@ if question := st.chat_input("Ask a question about your data"):
         idx = len(st.session_state["messages"])
         render(result, key=str(idx))
 
+    st.session_state["asked"] = st.session_state.get("asked", 0) + 1
+    daily_usage()["count"] += 1
     st.session_state["messages"].append({"role": "assistant", "result": result})
     st.session_state["history"].append((question, result["code"]))
